@@ -411,17 +411,23 @@
 (defmethod handle-breakout ::grouped-timeseries [_ {[breakout-field] :breakout} query-context]
   (assoc-in query-context [:query :granularity] (unit->granularity (:unit breakout-field))))
 
-(defmethod handle-breakout ::topN [_ {[breakout-field] :breakout :as foo} query-context]
-  (-> query-context
-      (update :projections conj (keyword (or (name breakout-field)
-                                             (:outputName (->dimension-rvalue breakout-field)))))
-      (assoc-in [:query :dimension] (->dimension-rvalue breakout-field))))
+(defmethod handle-breakout ::topN [_ {[breakout-field] :breakout} query-context]
+  (let [dim-rvalue (->dimension-rvalue breakout-field)]
+    (-> query-context
+        (update :projections conj (keyword (if (and (map? dim-rvalue)
+                                                    (contains? dim-rvalue :outputName))
+                                             (:outputName dim-rvalue)
+                                             (name breakout-field))))
+        (assoc-in [:query :dimension] dim-rvalue))))
 
 (defmethod handle-breakout ::groupBy [_ {breakout-fields :breakout} query-context]
   (-> query-context
       (update :projections into (map (fn [breakout-field]
-                                       (keyword (or (name breakout-field)
-                                                    (:outputName (->dimension-rvalue breakout-field)))))
+                                       (let [dim-rvalue (->dimension-rvalue breakout-field)]
+                                         (keyword (if (and (map? dim-rvalue)
+                                                           (contains? dim-rvalue :outputName))
+                                                    (:outputName dim-rvalue)
+                                                    (name breakout-field)))))
                                      breakout-fields))
       (assoc-in [:query :dimensions] (mapv ->dimension-rvalue breakout-fields))))
 
@@ -777,8 +783,9 @@
                      (json/parse-string query keyword)
                      query)
         query-type (or query-type (keyword "metabase.driver.druid.query-processor" (name (:queryType query))))
-        results    (->> (do-query details query)
-                        (post-process query-type))
+        results     (->> query
+                         (do-query details)
+                         (post-process query-type))
         columns    (if mbql?
                      (->> projections
                           remove-bonus-keys
